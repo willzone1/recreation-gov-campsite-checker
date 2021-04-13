@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+import csv
 from datetime import datetime, timedelta
 from dateutil import rrule
 from itertools import count, groupby
@@ -11,6 +12,15 @@ from itertools import count, groupby
 import requests
 from fake_useragent import UserAgent
 
+import smtplib, ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import configparser
+
+config = configparser.ConfigParser()
+config.read_file(open('config.cfg'))
+
+# CAMPSITE_TYPE = "STANDARD NONELECTRIC"
 
 LOG = logging.getLogger(__name__)
 formatter = logging.Formatter("%(asctime)s - %(process)s - %(levelname)s - %(message)s")
@@ -30,6 +40,28 @@ SUCCESS_EMOJI = "🏕"
 FAILURE_EMOJI = "❌"
 
 headers = {"User-Agent": UserAgent().random}
+
+
+def send_email(subject, body):
+    sender_email = config.get('EMAIL', 'sender_email')
+    receiver_email = config.get('EMAIL', 'receiver_email')
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = sender_email
+    message["To"] = receiver_email
+
+    text = """\
+    {}""".format(body)
+
+    message.attach(MIMEText(text, "plain"))
+
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+
+    with smtplib.SMTP_SSL(config.get('EMAIL', 'sender_smtp_server'), config.get('EMAIL', 'sender_smtp_port'), context=context) as server:
+        server.login(sender_email, config.get('EMAIL', 'sender_password'))
+        server.sendmail(sender_email, receiver_email, message.as_string())
 
 
 def format_date(date_object, format_string=ISO_DATE_FORMAT_REQUEST):
@@ -172,7 +204,7 @@ def consecutive_nights(available, nights):
         for dstr in available
     ]
     c = count()
-
+    nights_ordinal = datetime.strptime(str(nights), "%d").toordinal()
     consective_ranges = list(
         list(g) for _, g in groupby(ordinal_dates, lambda x: x - next(c))
     )
@@ -180,7 +212,7 @@ def consecutive_nights(available, nights):
     long_enough_consecutive_ranges = []
     for r in consective_ranges:
         # Skip ranges that are too short.
-        if len(r) < nights:
+        if r[0] < nights_ordinal:
             continue
         for start_index in range(0, len(r) - nights):
             start_nice = format_date(
@@ -211,12 +243,12 @@ def check_park(park_id, start_date, end_date, campsite_type, nights=None):
     return current, maximum, availabilities_filtered, name_of_park
 
 
-def output_human_output(parks):
+def output_human_output(parks, start_date, end_date, nights):
     out = []
     availabilities = False
     for park_id in parks:
         current, maximum, _, name_of_park = check_park(
-            park_id, args.start_date, args.end_date, args.campsite_type, nights=args.nights
+            park_id, start_date, end_date, campsite_type=None, nights=nights
         )
         if current:
             emoji = SUCCESS_EMOJI
@@ -225,30 +257,34 @@ def output_human_output(parks):
             emoji = FAILURE_EMOJI
 
         out.append(
-            "{} {} ({}): {} site(s) available out of {} site(s)".format(
-                emoji, name_of_park, park_id, current, maximum
+            "{} {} ({}): {} site(s) available out of {} site(s) for {} nights".format(
+                emoji, name_of_park, park_id, current, maximum, nights
             )
         )
 
     if availabilities:
         print(
             "There are campsites available from {} to {}!!!".format(
-                args.start_date.strftime(INPUT_DATE_FORMAT),
-                args.end_date.strftime(INPUT_DATE_FORMAT),
+                start_date.strftime(INPUT_DATE_FORMAT),
+                end_date.strftime(INPUT_DATE_FORMAT),
             )
         )
+        send_email(subject="CAMPSITES AVAILABLE from {} to {}!!!".format(
+                start_date.strftime(INPUT_DATE_FORMAT),
+                end_date.strftime(INPUT_DATE_FORMAT)),
+                body=out)
     else:
-        print("There are no campsites available :(")
+        print("There are no campsites available :( from ", start_date, " to ", end_date, " for ", nights, " nights")
     print("\n".join(out))
     return availabilities
 
 
-def output_json_output(parks):
+def output_json_output(parks, start_date, end_date, nights):
     park_to_availabilities = {}
     availabilities = False
     for park_id in parks:
         current, _, availabilities_filtered, _ = check_park(
-            park_id, args.start_date, args.end_date, args.campsite_type, nights=args.nights
+            park_id, start_date, end_date, campsite_type, nights=nights
         )
         if current:
             availabilities = True
@@ -259,11 +295,11 @@ def output_json_output(parks):
     return availabilities
 
 
-def main(parks, json_output=False):
+def main(parks, start_date, end_date, nights, json_output=False):
     if json_output:
-        return output_json_output(parks)
+        return output_json_output(parks, start_date, end_date, nights)
     else:
-        return output_human_output(parks)
+        return output_human_output(parks, start_date, end_date, nights)
 
 
 def valid_date(s):
@@ -282,62 +318,36 @@ def positive_int(i):
     return i
 
 
+def read_csv(filename):
+    with open(filename, newline='') as datescsv:
+        dates = list(csv.reader(datescsv, delimiter=',', quotechar='|'))
+    return dates
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", "-d", action="store_true", help="Debug log level")
-    parser.add_argument(
-        "--start-date", required=True, help="Start date [YYYY-MM-DD]", type=valid_date
-    )
-    parser.add_argument(
-        "--end-date",
-        required=True,
-        help="End date [YYYY-MM-DD]. You expect to leave this day, not stay the night.",
-        type=valid_date,
-    )
-    parser.add_argument(
-        "--nights",
-        help="Number of consecutive nights (default is all nights in the given range).",
-        type=positive_int,
-    )
-    parser.add_argument(
-        "--campsite-type",
-        help=(
-            "If you want to filter by a type of campsite. For example "
-            '"STANDARD NONELECTRIC" or TODO'
-        ),
-    )
-    parser.add_argument(
-        "--json-output",
-        action="store_true",
-        help=(
-            "This make the script output JSON instead of human readable "
-            "output. Note, this is incompatible with the twitter notifier. "
-            "This output includes more precise information, such as the exact "
-            "avaiable dates and which sites are available."
-        ),
-    )
-    parks_group = parser.add_mutually_exclusive_group(required=True)
-    parks_group.add_argument(
-        "--parks", dest="parks", metavar="park", nargs="+", help="Park ID(s)", type=int
-    )
-    parks_group.add_argument(
-        "--stdin",
-        "-",
-        action="store_true",
-        help="Read list of park ID(s) from stdin instead",
-    )
+    # Start date has format YYYY-MM-DD
+    # End date also has format YYYY-MM-DD. You expect to leave this day, not stay the night.
+    # campsite-type can be set if you want to filter by a type of campsite. For example "STANDARD NONELECTRIC"
+    # park IDs can be found at the end of the campground URL
 
-    args = parser.parse_args()
+    campsite_type = None
 
-    if args.debug:
-        LOG.setLevel(logging.DEBUG)
+    net_avail = []
 
-    parks = args.parks or [p.strip() for p in sys.stdin]
+    nights = 1
 
-    try:
-        code = 0 if main(parks, json_output=args.json_output) else 1
-        sys.exit(code)
-    except Exception:
-        print("Something went wrong")
-        LOG.exception("Something went wrong")
-        raise
+    for trip in read_csv(filename="search.csv"):
+        start_date = valid_date(trip[0])
+        end_date = valid_date(trip[1])
+        parks = trip[2].split(";")
+
+        if start_date.date() >= datetime.today().date():
+            try:
+                code = 0 if main(parks, start_date, end_date, nights, json_output=False) else 1
+                net_avail.append(code)
+            except Exception:
+                print("Something went wrong")
+                LOG.exception("Something went wrong")
+                raise
+
+    sys.exit(min(net_avail))
