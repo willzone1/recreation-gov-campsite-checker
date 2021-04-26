@@ -42,9 +42,9 @@ FAILURE_EMOJI = "❌"
 headers = {"User-Agent": UserAgent().random}
 
 
-def send_email(subject, body):
+def send_email(subject, body, address_modifier=""):
     sender_email = config.get('EMAIL', 'sender_email')
-    receiver_email = config.get('EMAIL', 'receiver_email')
+    receiver_email = config.get('EMAIL', "receiver_email{}".format(address_modifier))
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
@@ -81,6 +81,8 @@ def site_date_to_human_date(date_string):
 def send_request(url, params):
     resp = requests.get(url, params=params, headers=headers)
     if resp.status_code != 200:
+        send_email("ERROR {}".format(resp.status_code),"ERROR, {} code received from {}: {}".format(
+                resp.status_code, url, resp.text), "_error")
         raise RuntimeError(
             "failedRequest",
             "ERROR, {} code received from {}: {}".format(
@@ -272,7 +274,9 @@ def output_human_output(parks, start_date, end_date, nights):
         send_email(subject="CAMPSITES AVAILABLE from {} to {}!!!".format(
                 start_date.strftime(INPUT_DATE_FORMAT),
                 end_date.strftime(INPUT_DATE_FORMAT)),
-                body=out)
+                body="CAMPSITES AVAILABLE from {} to {}!/n{}".format(
+                start_date.strftime(INPUT_DATE_FORMAT),
+                end_date.strftime(INPUT_DATE_FORMAT), out))
     else:
         print("There are no campsites available :( from ", start_date, " to ", end_date, " for ", nights, " nights")
     print("\n".join(out))
