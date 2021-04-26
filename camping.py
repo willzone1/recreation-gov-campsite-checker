@@ -81,15 +81,20 @@ def site_date_to_human_date(date_string):
 
 def send_request(url, params):
     resp = requests.get(url, params=params, headers=headers)
-    if resp.status_code != 200:
-        send_email("ERROR {}".format(resp.status_code),"ERROR, {} code received from {}: {}".format(
-                resp.status_code, url, resp.text), "_error")
-        raise RuntimeError(
-            "failedRequest",
-            "ERROR, {} code received from {}: {}".format(
-                resp.status_code, url, resp.text
-            ),
-        )
+    tries = 1
+    while resp.status_code != 200:
+        resp = requests.get(url, params=params, headers=headers)
+        tries += 1
+        if resp.status_code != 200 and tries > 5:
+            send_email("RETRYING {}".format(resp.status_code), "RETRYING because ERROR, {} code received from {}: {}".
+                       format(resp.status_code, url, resp.text), "_error")
+            raise RuntimeError(
+                "failedRequest",
+                "ERROR, {} code received from {}: {}".format(
+                    resp.status_code, url, resp.text
+                ),
+            )
+
     return resp.json()
 
 
