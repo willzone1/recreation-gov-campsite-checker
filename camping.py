@@ -16,6 +16,7 @@ import smtplib, ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import configparser
+import time
 
 config = configparser.ConfigParser()
 config.read_file(open('config.cfg'))
@@ -83,10 +84,11 @@ def send_request(url, params):
     resp = requests.get(url, params=params, headers=headers)
     tries = 1
     while resp.status_code != 200:
+        time.sleep(5)
         resp = requests.get(url, params=params, headers=headers)
         tries += 1
         if resp.status_code != 200 and tries > 5:
-            send_email("RETRYING {}".format(resp.status_code), "RETRYING because ERROR, {} code received from {}: {}".
+            send_email("5x ERROR {}".format(resp.status_code), "ERROR, {} code received from {}: {}".
                        format(resp.status_code, url, resp.text), "_error")
             raise RuntimeError(
                 "failedRequest",
