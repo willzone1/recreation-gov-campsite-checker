@@ -52,7 +52,8 @@ def send_email(subject, body, address_modifier=""):
     message["To"] = receiver_email
 
     text = """\
-    {}""".format(body)
+    {}\n
+    FROM: {}""".format(body, config.get('SERVER', 'name'))
 
     message.attach(MIMEText(text, "plain"))
 
@@ -274,7 +275,7 @@ def output_human_output(parks, start_date, end_date, nights):
         send_email(subject="CAMPSITES AVAILABLE from {} to {}!!!".format(
                 start_date.strftime(INPUT_DATE_FORMAT),
                 end_date.strftime(INPUT_DATE_FORMAT)),
-                body="CAMPSITES AVAILABLE from {} to {}!/n{}".format(
+                body="CAMPSITES AVAILABLE from {} to {}!\n{}".format(
                 start_date.strftime(INPUT_DATE_FORMAT),
                 end_date.strftime(INPUT_DATE_FORMAT), out))
     else:
